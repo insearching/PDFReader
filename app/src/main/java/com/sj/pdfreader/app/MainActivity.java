@@ -1,19 +1,49 @@
 package com.sj.pdfreader.app;
 
-import android.support.v7.app.ActionBarActivity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.view.Menu;
 import android.view.MenuItem;
 
+import net.sf.andpdf.pdfviewer.PdfViewerActivity;
 
-public class MainActivity extends ActionBarActivity {
+
+public class MainActivity extends PdfViewerActivity {
+
+    private DownloadService mService;
+
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+
+        //downloadFile(url);
+
     }
 
+    public void downloadFile(String requestUrl){
+        ServiceConnection mConn = new ServiceConnection() {
+            @Override
+            public void onServiceConnected(ComponentName name, IBinder binder) {
+                mService = ((DownloadService.FileDownloadBinder) binder).getService();
+                mService.attachListener(getApplicationContext());
+            }
+
+            @Override
+            public void onServiceDisconnected(ComponentName name) {
+            }
+        };
+        Intent intent = new Intent(this, DownloadService.class)
+                .putExtra("request_url", requestUrl);
+        bindService(intent, mConn, Context.BIND_AUTO_CREATE);
+        startService(intent);
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -33,4 +63,56 @@ public class MainActivity extends ActionBarActivity {
         }
         return super.onOptionsItemSelected(item);
     }
+
+    @Override
+    public int getPreviousPageImageResource() {
+        return R.drawable.left_arrow;
+    }
+
+    @Override
+    public int getNextPageImageResource() {
+        return R.drawable.right_arrow;
+    }
+
+    @Override
+    public int getZoomInImageResource() {
+        return R.drawable.zoom_in;
+    }
+
+    @Override
+    public int getZoomOutImageResource() {
+        return R.drawable.zoom_out;
+    }
+
+    @Override
+    public int getPdfPasswordLayoutResource() {
+        return R.layout.pdf_file_password;
+    }
+
+    @Override
+    public int getPdfPageNumberResource() {
+        return R.layout.dialog_pagenumber;
+    }
+
+    @Override
+    public int getPdfPasswordEditField() {
+        return R.id.etPassword;
+    }
+
+    @Override
+    public int getPdfPasswordOkButton() {
+        return R.id.btOK;
+    }
+
+    @Override
+    public int getPdfPasswordExitButton() {
+        return R.id.btExit;
+    }
+
+    @Override
+    public int getPdfPageNumberEditField() {
+        return R.id.pagenum_edit;
+    }
+
+
 }
