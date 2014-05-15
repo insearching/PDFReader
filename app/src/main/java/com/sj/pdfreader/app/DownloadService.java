@@ -1,23 +1,17 @@
 package com.sj.pdfreader.app;
 
-import android.annotation.SuppressLint;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
-import android.content.SharedPreferences.Editor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Binder;
-import android.os.Environment;
 import android.os.IBinder;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
-import android.widget.Toast;
+import android.webkit.URLUtil;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -28,14 +22,14 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 public class DownloadService extends Service {
-    //Application info on service
-    private static final String TAG = "DOWNLOAD SERVICE";
-    private static final String EXT_STORAGE_PATH = Environment.getExternalStorageDirectory().getPath() + "/PDFReader";
-    private Context mContext = this;
+
+    private static final String TAG = "PDFViewer";
+
     private DownloadListener downloadListener;
+    private DownloadFileTask task;
     private Integer mProgress = 0;
 
-    IBinder mBinder = new FileDownloadBinder();
+    private IBinder mBinder = new FileDownloadBinder();
 
     public class FileDownloadBinder extends Binder {
         public DownloadService getService() {
@@ -44,53 +38,44 @@ public class DownloadService extends Service {
     }
 
     @Override
-    public void onCreate() {
-        super.onCreate();
-        android.os.Debug.waitForDebugger();
-        Log.d(TAG, "CREATED");
-    }
-
-    @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.d(TAG, "onStartCommand");
-        String requestUrl = intent.getStringExtra("request_url");
+        String requestUrl = intent.getStringExtra(DownloadActivity.REQUEST_URL);
+        String path = intent.getStringExtra(DownloadActivity.PATH);
 
-        DownloadFile dd = new DownloadFile(startId);
-        dd.execute(requestUrl);
-        return super.onStartCommand(intent, flags, startId);
+        task = new DownloadFileTask(startId, requestUrl, path);
+        task.execute();
+        return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        Log.d(TAG, "DESTORY");
+        task.cancel(true);
     }
 
     @Override
     public IBinder onBind(Intent intent) {
-        Log.d(TAG, "onBind");
         return mBinder;
     }
 
     /**
-     * Downloads file from service
-     * param[0] - request URL
+     * Downloads file from web by given direct url
      */
-    class DownloadFile extends AsyncTask<String, Integer, String> {
+    class DownloadFileTask extends AsyncTask<String, Integer, String> {
         int startId;
-        String requestUrl = null;
+        String requestUrl;
+        String path;
 
-        public DownloadFile(int startId) {
+        public DownloadFileTask(int startId, String requestUrl, String path) {
             this.startId = startId;
+            this.requestUrl = requestUrl;
+            this.path = path;
         }
 
         @Override
         protected void onPreExecute() {
             super.onPreExecute();
             mProgress = 0;
-            if (downloadListener != null)
-                downloadListener.onDownloadStarted(requestUrl);
-
         }
 
         @Override
@@ -99,24 +84,21 @@ public class DownloadService extends Service {
             OutputStream output = null;
             HttpURLConnection connection = null;
             try {
-                URL url = new URL(param[0]);
+                URL url = new URL(requestUrl);
                 connection = (HttpURLConnection) url.openConnection();
                 connection.connect();
 
-                // expect HTTP 200 OK, so we don't mistakenly save error report
-                // instead of the file
                 if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
                     return "Server returned HTTP " + connection.getResponseCode()
                             + " " + connection.getResponseMessage();
                 }
 
-                // this will be useful to display download percentage
-                // might be -1: server did not report the length
                 int fileLength = connection.getContentLength();
 
                 // download the file
                 input = connection.getInputStream();
-                output = new FileOutputStream("/sdcard/file.pdf");
+                File file = createFile(path);
+                output = new FileOutputStream(file);
 
                 byte data[] = new byte[4096];
                 long total = 0;
@@ -131,6 +113,7 @@ public class DownloadService extends Service {
                     // publishing the progress....
                     if (fileLength > 0) // only if total length is known
                         publishProgress((int) (total * 100 / fileLength));
+
                     output.write(data, 0, count);
                 }
             } catch (Exception e) {
@@ -155,27 +138,45 @@ public class DownloadService extends Service {
             super.onProgressUpdate(progress);
             if ((progress[0] % 5) == 0 && mProgress != progress[0]) {
                 mProgress = progress[0];
-                showDownloadNotification(requestUrl, "Downloading", mProgress);
-                if (downloadListener != null) {
-                    downloadListener.onProgressChanged(requestUrl);
-                }
+                showDownloadNotification(requestUrl, getString(R.string.downloading), mProgress);
             }
         }
 
         @Override
         protected void onPostExecute(String result) {
             super.onPostExecute(result);
-            Log.i(TAG, String.valueOf(result));
             if (result == null) {
-                showNotification(requestUrl, getString(R.string.downloaded));
-                Toast.makeText(mContext, getString(R.string.download_completed), Toast.LENGTH_LONG).show();
+                String fileName = URLUtil.guessFileName(requestUrl, null, null);
+                showNotification(getString(R.string.app_name), fileName + " " + getString(R.string.downloaded));
                 if (downloadListener != null)
-                    downloadListener.onDownloadCompleted(requestUrl);
+                    downloadListener.onDownloadCompleted(requestUrl, path);
             } else {
-                Toast.makeText(mContext, getString(R.string.download_failed), Toast.LENGTH_LONG).show();
+                Log.e(TAG, result);
             }
             stopSelf(startId);
         }
+    }
+
+    private File createFile(String path) {
+        File file = new File(path);
+        if(!file.exists())
+            file.mkdirs();
+
+        file = null;
+        try {
+            // Create file or re-download if needest
+            file = new File(path);
+
+            if (!file.createNewFile()) {
+                file.delete();
+                if (!file.createNewFile()) {
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        return file;
     }
 
     private void showDownloadNotification(String title, String text, int progress) {
@@ -200,59 +201,18 @@ public class DownloadService extends Service {
      * Show a notification when file is downloaded
      */
     private void showNotification(String title, String text) {
-        Intent notificationIntent = new Intent(Intent.ACTION_VIEW);
-        File file = new File(EXT_STORAGE_PATH + "/" + title);
-        String extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(Uri.fromFile(file).toString().toLowerCase());
-        String mimetype = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-        notificationIntent.setDataAndType(Uri.fromFile(file), mimetype);
-
-        PendingIntent contentIntent = PendingIntent.getActivity(mContext,
-                1, notificationIntent,
-                PendingIntent.FLAG_CANCEL_CURRENT);
-
-        NotificationManager nm = (NotificationManager)
+        NotificationManager manager = (NotificationManager)
                 getApplicationContext()
                         .getSystemService(Context.NOTIFICATION_SERVICE);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this);
-        builder.setContentIntent(contentIntent)
+        builder
                 .setAutoCancel(true)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setLargeIcon(BitmapFactory.decodeResource(getResources(), R.drawable.ic_launcher))
                 .setSmallIcon(R.drawable.ic_downloading);
-        nm.notify(0, builder.build());
-    }
-
-    private File createFile(String fileName) {
-        String sFolder = EXT_STORAGE_PATH + "/";
-        File file = new File(sFolder);
-        if (!file.exists())
-            file.mkdirs();
-
-        file = null;
-        try {
-            // Create file or re-download if needest
-            file = new File(sFolder + fileName);
-
-            if (!file.createNewFile()) {
-                file.delete();
-                if (!file.createNewFile()) {
-                    return null;
-                }
-            }
-        } catch (Exception e) {
-            return null;
-        }
-        return file;
-    }
-
-    @SuppressLint("InlinedApi")
-    private static void saveFileData(Context context, String fileName, String fileIdent) {
-        SharedPreferences downloadPrefs = context.getSharedPreferences("downloaded_files", Context.MODE_MULTI_PROCESS);
-        Editor edit = downloadPrefs.edit();
-        edit.putString(fileIdent, fileName);
-        edit.commit();
+        manager.notify(0, builder.build());
     }
 
     public void attachListener(Context context) {
@@ -260,12 +220,6 @@ public class DownloadService extends Service {
     }
 
     public interface DownloadListener {
-
-        public void onDownloadStarted(String url);
-
-        public void onProgressChanged(String url);
-
-        public void onDownloadCompleted(String url);
-
+        public void onDownloadCompleted(String url, String path);
     }
 }
